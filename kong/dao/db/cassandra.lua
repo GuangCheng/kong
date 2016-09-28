@@ -60,8 +60,56 @@ function _M.new(kong_config)
   return self
 end
 
+local function extract_major(release_version)
+  return string.match(release_version, "^(%d+)%.%d+%.?%d*$")
+end
+
+local function cluster_release_version(peers)
+  local first_release_version
+  local ok = true
+
+  for i = 1, #peers do
+    local release_version = peers[i].release_version
+    if not release_version then
+      return nil, 'no release_version for peer '..peers[i].host
+    end
+
+    local major_version = extract_major(release_version)
+    if i == 1 then
+      first_release_version = major_version
+    elseif major_version ~= first_release_version then
+      ok = false
+      break
+    end
+  end
+
+  if not ok then
+    local err_t = {"different major versions detected (only all of 2.x or 3.x supported):"}
+    for i = 1, #peers do
+      err_t[#err_t+1] = string.format("%s (%s)", peers[i].host, peers[i].release_version)
+    end
+
+    return nil, table.concat(err_t, " ")
+  end
+
+  return tonumber(first_release_version)
+end
+
+_M.extract_major = extract_major
+_M.cluster_release_version = cluster_release_version
+
 function _M:init()
-  return self.cluster:refresh()
+  local ok, err = self.cluster:refresh()
+  if not ok then return nil, err end
+
+  local peers, err = self.cluster:get_peers()
+  if err then return nil, err
+  elseif not peers then return nil, 'no peers in shm' end
+
+  self.release_version, err = cluster_release_version(peers)
+  if not self.release_version then return nil, err end
+
+  return true
 end
 
 function _M:infos()
